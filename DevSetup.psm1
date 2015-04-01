@@ -90,24 +90,23 @@ function Install-RequiredPackage
 }
 
 function Load-InstalledChocoPackage
-{   
+{ 
+    $script:InstalledChocoPackages = @()
+    if (-not (Test-Chocolatey)) {return}
+
     $Packages = (choco list -localonly) -split "`r`n"
 
-    if ($Packages[0] -match "No packages found.")
-    {
-        $script:InstalledChocoPackages = @()
-    }
-    else
-    {
-        $Packages | % {
-            $Property = $_.Split(" ")
-            $script:InstalledChocoPackages += @{Name=($Property[0].Trim()); Version = ($Property[1].Trim())}
-        }
-    }
+    if ($Packages[0] -match "No packages found.") {return}
+    
+    $Packages | % {
+        $Property = $_.Split(" ")
+        $script:InstalledChocoPackages += @{Name=($Property[0].Trim()); Version = ($Property[1].Trim())}
+    }    
 }
 
 function Load-InstalledRubyGem
 {   
+    $script:InstalledRubyGems = @()
     Load-InstalledChocoPackage
 
     $RubyInstalled = $false
@@ -120,7 +119,7 @@ function Load-InstalledRubyGem
 
     if ($RubyInstalled)
     {
-        $Packages = (gem list -local) -split "`r`n"
+        $Packages = (gem list --local) -split "`r`n"
         
         $Packages | % {
             $Property = $_.Split(" ")
@@ -195,15 +194,15 @@ function Install-ChocoPackage
 
     if ($Force)
     {
-        $Command = 'choco install {0} -force'
+        $Command = 'install {0} -force'
     }
     else
     {
-        $Command = 'choco install {0}'
+        $Command = 'install {0}'
     }
     $Command = $Command -f $Name
 
-    powershell -c "$Command"
+    & choco ("$Command" -split ' ')
 }
 
 function Install-RubyGem
@@ -220,15 +219,15 @@ function Install-RubyGem
 
     if ($Force)
     {
-        $Command = 'gem install {0} --force'
+        $Command = 'install {0} --force'
     }
     else
     {
-        $Command = 'gem install {0}'
+        $Command = 'install {0}'
     }
     $Command = $Command -f $Name
 
-    powershell -c "$Command"
+    & gem ("$Command" -split ' ')
 }
 
 function Uninstall-RequiredPackage
@@ -238,34 +237,36 @@ function Uninstall-RequiredPackage
 
     Assert-Prerequisite
 
-    if (-not (Test-Chocolatey))
-    {
-        Install-Chocolatey
-    }
+    $ChocoInstalled = Test-Chocolatey
+    $RubyInstalled  = Test-ChocoPackage -Name 'ruby'
 
     Load-InstalledChocoPackage
+    Load-InstalledRubyGem
 
+    # first process all ruby gems
     $script:Packages | % {
-
-        $Package = New-Object PSObject -Property $_
-
-        $Installed =  (! (Test-ChocoPackage -Name $Package.Name ))
-        
-        if ($Installed)
+        if ($_.Type -ieq 'RubyGem')
         {
-            if ($Package.Type -ieq 'Chocolatey')
+            if (Test-RubyGem -Name $_.Name)
             {
-                uninstall-ChocoPackage -Name $Package.Name
-            }
-            else
-            {
-                Uninstall-RubyGem -Name $Package.Name 
+                Uninstall-RubyGem -Name $_.Name 
             }
         }
+    }
 
-        if ($Package.Path -ne $null)
+    # now process all choco packages
+    $script:Packages | % {
+        if ($_.Type -ieq 'Chocolatey')
         {
-            Remove-Path -PathFragment $Package.Path 
+            if (Test-ChocoPackage -Name $_.Name)
+            {
+                Uninstall-ChocoPackage -Name $_.Name
+            }
+
+            if ($_.Path -ne $null)
+            {
+                Remove-Path -PathFragment $_.Path 
+            }
         }
     }
 }
@@ -332,10 +333,10 @@ function Uninstall-ChocoPackage
         $Name
     )
     
-    $Command = 'choco uninstall {0}'
+    $Command = 'uninstall {0}'
     $Command = $Command -f $Name
 
-    powershell -c "$Command"
+    & choco ("$Command" -split ' ')
 }
 
 function Uninstall-RubyGem
@@ -347,10 +348,10 @@ function Uninstall-RubyGem
         $Name
     )
     
-    $Command = 'gem uninstall {0}'
+    $Command = 'uninstall {0} -x'
     $Command = $Command -f $Name
 
-    powershell -c "$Command"
+    & gem ("$Command" -split ' ')
 }
 
 function Test-Chocolatey
